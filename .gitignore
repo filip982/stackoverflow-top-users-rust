@@ -42,3 +42,6 @@ core/rust/target/
 
 # Claude agent worktrees (ephemeral, never commit)
 .claude/worktrees/
+
+# Generated UniFFI bindings
+core/rust/bindings/

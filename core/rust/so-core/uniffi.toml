@@ -1,0 +1,8 @@
+[bindings.kotlin]
+package_name = "com.filip982.socore"
+cdylib_name = "so_core"
+
+[bindings.swift]
+module_name = "SoCore"
+ffi_module_name = "SoCoreFFI"
+ffi_module_filename = "SoCoreFFI"

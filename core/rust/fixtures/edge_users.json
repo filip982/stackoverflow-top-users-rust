@@ -1,0 +1,26 @@
+{
+  "items": [
+    {
+      "user_id": 1,
+      "display_name": "Minimal &amp; &quot;Bare&quot; &lt;User&gt; &#39;one&#39; &#x263A;",
+      "reputation": 10,
+      "creation_date": 1600000000
+    },
+    {
+      "user_id": 2,
+      "display_name": "Unknown Fields",
+      "reputation": 20,
+      "creation_date": 1600000001,
+      "last_modified_date": 1700000001,
+      "location": "   ",
+      "website_url": "",
+      "profile_image": "https://example.com/a.png",
+      "brand_new_field": {"nested": [1, 2, 3]},
+      "collectives": [{"collective": {"name": "Go"}}]
+    }
+  ],
+  "has_more": false,
+  "quota_max": 300,
+  "quota_remaining": 297,
+  "some_future_wrapper_field": true
+}
