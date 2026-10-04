@@ -126,7 +126,7 @@ private struct FollowErrorAlert: ViewModifier {
 }
 
 func formatReputation(_ reputation: Int64) -> String {
-    reputation.formatted(.number)
+    reputation.formatted()
 }
 
 extension CoreError {
