@@ -1,8 +1,11 @@
-name: macOS (iOS core slices)
+name: macOS (iOS core + app)
 
-# Placeholder: proves so-core cross-compiles for the iOS device + simulator
-# slices on Apple Silicon. XCFramework packaging and app/XCTest jobs land in a
-# later phase (see docs/REWRITE_PLAN.md section 9).
+# ios-slices:     so-core cross-compiles for the iOS device + simulator slices (Apple Silicon).
+# ios-unit-tests: SoCore.xcframework + Swift bindings (core/rust/scripts/build-apple-xcframework.sh),
+#                 XcodeGen project, app build + XCTest unit/contract suite on the simulator; uploads
+#                 the packaged core as the `so-core-apple` artifact (docs/REWRITE_PLAN.md §9.5).
+# ios-ui-tests:   XCUITest acceptance suite against a standalone mock-server on the host
+#                 (the simulator shares the host network: http://localhost:8080).
 
 on:
   push:
@@ -49,3 +52,134 @@ jobs:
 
       - name: Generate Swift bindings (host dylib)
         run: ./scripts/generate-bindings.sh
+
+  ios-unit-tests:
+    name: iOS · xcframework + unit/contract tests
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          test -n "$XCODE" || { echo "no Xcode 16 on this image"; ls /Applications; exit 1; }
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install Rust toolchain + iOS targets
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-apple-ios aarch64-apple-ios-sim
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/rust
+          key: ios-xcframework
+
+      - name: Install XcodeGen
+        run: command -v xcodegen || brew install xcodegen
+
+      - name: Build SoCore.xcframework + Swift bindings, generate Xcode project
+        run: apps/ios/scripts/bootstrap.sh
+
+      - name: Unit + contract tests (iPhone 16 simulator)
+        run: |
+          xcodebuild test \
+            -project apps/ios/StackOverflowUsers.xcodeproj \
+            -scheme StackOverflowUsers \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -only-testing:StackOverflowUsersTests \
+            -resultBundlePath "$RUNNER_TEMP/ios-unit-tests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload packaged core (so-core-apple)
+        uses: actions/upload-artifact@v4
+        with:
+          name: so-core-apple
+          path: core/rust/build/apple/
+          if-no-files-found: error
+
+      - name: Upload test results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-unit-tests-xcresult
+          path: ${{ runner.temp }}/ios-unit-tests.xcresult
+
+  ios-ui-tests:
+    name: iOS · XCUITest acceptance (simulator + mock-server)
+    needs: ios-unit-tests
+    runs-on: macos-14
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode 16
+        run: |
+          XCODE="$(ls -d /Applications/Xcode_16*.app | sort -V | tail -1)"
+          test -n "$XCODE" || { echo "no Xcode 16 on this image"; ls /Applications; exit 1; }
+          sudo xcode-select -s "$XCODE"
+          xcodebuild -version
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/rust
+          key: ios-ui-mock-server
+
+      - name: Download packaged core
+        uses: actions/download-artifact@v4
+        with:
+          name: so-core-apple
+          path: core/rust/build/apple
+
+      - name: Install XcodeGen
+        run: command -v xcodegen || brew install xcodegen
+
+      - name: Generate Xcode project (prebuilt core)
+        run: apps/ios/scripts/bootstrap.sh --skip-core
+
+      - name: Start mock-server on the host
+        working-directory: core/rust
+        run: |
+          cargo build -p mock-server --bin mock-server
+          nohup ./target/debug/mock-server --host 127.0.0.1 --port 8080 > "$RUNNER_TEMP/mock-server.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:8080/__ready && exit 0
+            sleep 0.2
+          done
+          cat "$RUNNER_TEMP/mock-server.log"; exit 1
+
+      # TEST_RUNNER_-prefixed variables reach the XCUITest runner without the prefix.
+      - name: XCUITest acceptance suite (iPhone 16 simulator)
+        env:
+          TEST_RUNNER_MOCK_BASE_URL: http://localhost:8080
+        run: |
+          xcodebuild test \
+            -project apps/ios/StackOverflowUsers.xcodeproj \
+            -scheme StackOverflowUsers \
+            -destination 'platform=iOS Simulator,name=iPhone 16' \
+            -only-testing:StackOverflowUsersUITests \
+            -resultBundlePath "$RUNNER_TEMP/ios-ui-tests.xcresult" \
+            CODE_SIGNING_ALLOWED=NO
+
+      - name: Upload test results + mock-server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-ui-tests-results
+          path: |
+            ${{ runner.temp }}/ios-ui-tests.xcresult
+            ${{ runner.temp }}/mock-server.log
