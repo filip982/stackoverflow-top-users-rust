@@ -27,4 +27,12 @@ sealed interface SortOptionsIntent {
 }
 
 /** Pure reducer. */
-fun reduceSortOptions(state: SortOptionsState, intent: SortOptionsIntent): SortOptionsState = state
+fun reduceSortOptions(state: SortOptionsState, intent: SortOptionsIntent): SortOptionsState {
+    if (state.outcome != null) return state
+    return when (intent) {
+        is SortOptionsIntent.SelectField -> state.copy(draft = state.draft.copy(field = intent.field))
+        is SortOptionsIntent.SelectDirection -> state.copy(draft = state.draft.copy(direction = intent.direction))
+        SortOptionsIntent.Apply -> state.copy(outcome = SortOptionsState.Outcome.Applied(state.draft))
+        SortOptionsIntent.Cancel -> state.copy(draft = state.applied, outcome = SortOptionsState.Outcome.Cancelled)
+    }
+}

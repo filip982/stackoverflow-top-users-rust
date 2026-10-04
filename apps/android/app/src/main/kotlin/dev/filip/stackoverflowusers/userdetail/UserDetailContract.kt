@@ -22,5 +22,18 @@ sealed interface UserDetailIntent {
     data class FollowFailed(val error: CoreError) : UserDetailIntent
 }
 
-/** Pure reducer. */
-fun reduceUserDetail(state: UserDetailState, intent: UserDetailIntent): UserDetailState = state
+/** Pure reducer. Ignored intents return the same state instance. */
+fun reduceUserDetail(state: UserDetailState, intent: UserDetailIntent): UserDetailState = when (intent) {
+    UserDetailIntent.ToggleFollow ->
+        if (state.user == null || state.togglePending) state
+        else state.copy(togglePending = true, followError = null)
+
+    is UserDetailIntent.FollowToggled -> state.copy(togglePending = false, isFollowed = intent.followed)
+
+    is UserDetailIntent.FollowFailed -> state.copy(togglePending = false, followError = intent.error)
+
+    is UserDetailIntent.FollowsChanged ->
+        state.user?.let { state.copy(isFollowed = it.id in intent.followed) } ?: state
+
+    UserDetailIntent.DismissFollowError -> state.copy(followError = null)
+}
