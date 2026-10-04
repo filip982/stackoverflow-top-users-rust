@@ -128,6 +128,14 @@ android {
     }
 }
 
+androidComponents {
+    // Host tests run on debug only: Compose's test activity (ui-test-manifest) is debug-only,
+    // and release differs solely in BuildConfig.
+    beforeVariants(selector().withBuildType("release")) { variant ->
+        (variant as com.android.build.api.variant.HasUnitTestBuilder).enableUnitTest = false
+    }
+}
+
 kotlin {
     compilerOptions {
         jvmTarget.set(JvmTarget.JVM_17)
