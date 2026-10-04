@@ -24,10 +24,10 @@ OUT="$ROOT/bindings"
 rm -rf "$OUT"
 mkdir -p "$OUT/kotlin" "$OUT/swift"
 
-cargo build -p so-core --lib "${CARGO_FLAGS[@]}"
+cargo build -p so-core --lib ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"}
 
 for LANGUAGE in kotlin swift; do
-  cargo run -q -p so-core --features cli --bin uniffi-bindgen "${CARGO_FLAGS[@]}" -- \
+  cargo run -q -p so-core --features cli --bin uniffi-bindgen ${CARGO_FLAGS[@]+"${CARGO_FLAGS[@]}"} -- \
     generate --no-format --library "$LIB" --language "$LANGUAGE" --out-dir "$OUT/$LANGUAGE"
 done
 
