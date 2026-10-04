@@ -11,13 +11,20 @@ Each line item maps to exactly one GitHub issue. When pm-agent creates the issue
 - `[x]` — merged to develop
 - `[R]` — merged to main (released)
 
+> **Architecture note (supersedes the stacks originally listed here):** the rebuild follows
+> [`docs/REWRITE_PLAN.md`](REWRITE_PLAN.md) §7/§9 and [`docs/architecture.md`](architecture.md).
+> The Rust core (`core/rust/so-core`) is the data + business layer **from day one** (phases B1–B6:
+> core → mock-server → bindings → Android → iOS → e2e/CI), not extracted later. Both apps are thin
+> MVI clients over UniFFI bindings. There are no per-platform networking/persistence layers and
+> no third-party DI or image libraries on iOS.
+
 ---
 
 ## Phase 1 — iOS
 
 > SwiftUI app: user list, detail, sorting, local follow state.
-> Stack: SwiftUI · XcodeGen · SPM local packages · swift-dependencies · Kingfisher
-> Sequencing: features must land in order — each builds on the networking + persistence layer established in feature 1.
+> Stack: SwiftUI · XcodeGen · hand-rolled MVI (`@MainActor` stores) · Rust core via UniFFI Swift bindings + prebuilt XCFramework · `AsyncImage` · no third-party packages (see `apps/ios/README.md`)
+> Sequencing: features must land in order. Networking and persistence come from the Rust core.
 
 - [>] User list screen + follow/unfollow <!-- #1 -->
 - [ ] User detail screen + follow/unfollow <!-- depends: #1 -->
@@ -29,8 +36,8 @@ Each line item maps to exactly one GitHub issue. When pm-agent creates the issue
 ## Phase 2 — Android
 
 > Jetpack Compose app mirroring Phase 1 feature-for-feature.
-> Stack: Jetpack Compose · Gradle multi-module · Hilt · Retrofit · Coil
-> Sequencing: mirrors iOS order for the same dependency reasons. Phase 2 starts only after Phase 1 is tagged on main.
+> Stack: Jetpack Compose · single `:app` module · constructor injection · hand-rolled MVI · Rust core via UniFFI Kotlin bindings (JNA + cargo-ndk) · Coil (see `apps/android/README.md`)
+> Sequencing: mirrors iOS feature order. Under the rewrite plan, Android (B4) lands before iOS (B5).
 
 - [ ] User list screen + follow/unfollow
 - [ ] User detail screen + follow/unfollow
@@ -41,10 +48,10 @@ Each line item maps to exactly one GitHub issue. When pm-agent creates the issue
 
 ## Phase 3 — Rust Core
 
-> Extract shared domain logic into a Rust crate exposed via UniFFI bindings.
-> Both iOS and Android replace their domain layers with generated bindings.
-> Stack: Rust · Mozilla UniFFI · `core/rust/`
-> Sequencing: starts only after Phase 1 and Phase 2 share a stable, frozen domain contract.
+> Shared Rust crate (entities, API client, follow persistence, repository, use cases) exposed via UniFFI.
+> Both apps consume generated bindings directly; there is no platform domain layer to replace.
+> Stack: Rust · Mozilla UniFFI 0.32 · reqwest/rustls · `core/rust/`
+> Sequencing: comes first under the rewrite plan (B1–B3).
 
 - [ ] Core Rust crate setup (workspace, UniFFI scaffold)
 - [ ] Extract User domain model and repository protocol to Rust

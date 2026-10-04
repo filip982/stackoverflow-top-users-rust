@@ -24,6 +24,7 @@ apps/android/build/
 apps/android/**/*.apk
 apps/android/**/*.aab
 apps/android/local.properties
+apps/android/.kotlin/
 
 # Rust
 core/rust/target/
@@ -42,3 +43,6 @@ core/rust/target/
 
 # Claude agent worktrees (ephemeral, never commit)
 .claude/worktrees/
+
+# Generated UniFFI bindings
+core/rust/bindings/

@@ -1,227 +1,207 @@
 # Architecture Guide
 
-This document is the source of truth for all agents and contributors working in this monorepo.
-Read it before making any structural or pattern decisions.
+This document is the **authoritative, current** architecture for this monorepo. It supersedes
+every earlier architecture decision (see [Superseded decisions](#superseded-decisions)).
+Product requirements live in [`docs/PROJECT_SPEC.md`](PROJECT_SPEC.md); the rebuild plan and its
+review live in [`docs/REWRITE_PLAN.md`](REWRITE_PLAN.md) (section 9 is binding).
 
 ---
 
-## Monorepo Structure
+## Summary
+
+A **Rust shared core** owns all data and business logic (entities, DTOs + parsing, HTTP client,
+follow persistence, repository, use cases). It is exposed through **UniFFI** (proc-macro style)
+to two thin native apps:
+
+- **iOS** — SwiftUI, consuming generated Swift bindings via a prebuilt XCFramework.
+- **Android** — Jetpack Compose, consuming generated Kotlin bindings (JNA) + `cargo-ndk` `.so`s.
+
+Both apps use a hand-rolled, minimal **MVI** pattern. Platform stores are thin reducers that
+delegate every data/business decision to the core.
 
 ```
-stackoverflow-users/
-├── apps/
-│   ├── ios/        ← Milestone 1: SwiftUI app
-│   └── android/    ← Milestone 2: Jetpack Compose app
-├── core/
-│   └── rust/       ← Milestone 3: shared business logic (UniFFI bridge)
-├── tests/
-│   └── e2e/        ← Milestone 4: integration and end-to-end tests
-└── docs/
-    └── architecture.md  ← this file
+┌──────────── SwiftUI View ────────────┐   ┌──────────── Compose UI ─────────────┐
+│ Intent → Store.reduce → State → View │   │ Intent → Store.reduce → State → UI  │
+└──────────────────┬───────────────────┘   └──────────────────┬──────────────────┘
+                   │  generated Swift bindings     generated Kotlin bindings │
+                   └───────────────────┬──────────────────────────────────────┘
+                                       ▼  UniFFI (async + callback interface)
+                ┌────────────────────── so-core (Rust) ──────────────────────┐
+                │ SoCore (exported facade, owns its Tokio runtime)           │
+                │   └ use cases: GetTopUsers · ToggleFollow · SortUsers      │
+                │       └ UserRepository (single instance, serialized writes)│
+                │           ├ UserApiService (reqwest + rustls)              │
+                │           └ FollowStore (JsonFileFollowStore, atomic write)│
+                └────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Universal Patterns (apply to ALL platforms)
-
-### 1. Unidirectional Data Flow
-
-Every screen follows the same flow regardless of platform:
+## Monorepo layout
 
 ```
-Action → ViewModel.send(action) → mutates State → View re-renders
+core/rust/            Cargo workspace
+  so-core/            shared core crate (lib + cdylib + staticlib), UniFFI exports
+  mock-server/        axum StackExchange mock (fixtures + scenarios), lib + bin
+  scripts/            binding generation + Apple XCFramework packaging scripts
+  bindings/           generated Swift/Kotlin bindings (gitignored)
+  build/apple/        SoCore.xcframework + Swift bindings for iOS (gitignored)
+apps/ios/             SwiftUI MVI app (XcodeGen project.yml; see apps/ios/README.md)
+apps/android/         Compose MVI app (see apps/android/README.md)
+tests/e2e/            e2e suites against mock-server — later phase
+docs/                 PROJECT_SPEC (product), architecture (this), REWRITE_PLAN
 ```
-
-- `Action` is a sealed enum of everything the user or system can trigger
-- `State` is a value type (struct) — the single source of truth for a screen
-- ViewModels expose one entry point: `send(_ action: Action)`
-- Views are pure rendering functions of State — zero business logic
-
-### 2. Layer Boundaries
-
-```
-View  →  ViewModel  →  Service  →  [Data packages]  →  Network/Disk
-```
-
-- Views import only their ViewModel
-- ViewModels import only Service protocols (never concrete data implementations)
-- Services import data packages and implement domain protocols
-- Data packages (Networking, Persistence, ImageLoading) have no knowledge of each other
-
-### 3. Protocol-Based Dependency Injection
-
-All cross-layer references are to protocols, never concrete types.
-This makes every layer independently testable.
-
-- iOS: PointFree `swift-dependencies` (`@Dependency` property wrapper)
-- Android: Hilt
-- Tests always inject fakes/mocks — no real network or disk in unit tests
-
-### 4. Domain Layer
-
-The domain layer contains:
-- **Models**: plain value types, no framework imports
-- **Repository protocols**: define what data operations exist, not how they work
-
-The domain layer has zero dependencies on any platform framework or data package.
-It is the extraction point for the future Rust core (milestone 3).
 
 ---
 
-## iOS (Milestone 1)
+## Shared core (`core/rust/so-core`)
 
-- **Language**: Swift 6, strict concurrency
-- **UI**: SwiftUI
-- **Min deployment**: iOS 17
-- **Architecture**: MVVM structured as MVI (Action/State/send pattern above)
-- **Reactive**: `@Observable` + `@MainActor` — no Combine, no RxSwift
-- **Project generation**: XcodeGen (`project.yml`) — `.xcodeproj` is gitignored
-- **Module system**: SPM local packages for data layer
+### Entities
 
-### iOS Layer Map
+- `User { id, display_name, reputation, avatar_url?, location?, website_url?, creation_date,
+  last_modified_date? }` — dates are epoch seconds (`i64`).
+- `SortField { Reputation | Name | CreationDate | ModifiedDate }`, `SortDirection { Asc | Desc }`.
 
-| Layer | Location | Rule |
+### Layers
+
+| Layer | Module | Rule |
 |---|---|---|
-| Models + protocols | `StackOverflowUsers/Domain/` | No UIKit, no SwiftUI, no framework imports |
-| Data (networking) | `Packages/Networking/` | SPM package, protocol-typed outputs |
-| Data (persistence) | `Packages/Persistence/` | SPM package, UserDefaults-backed |
-| Data (images) | Kingfisher (3rd party SPM) | `KFImage` in views, `ImageLoaderProtocol` wraps it for testability |
-| Service / glue | `StackOverflowUsers/Services/` | Composes data packages, conforms to domain protocols |
-| Features | `StackOverflowUsers/Features/<Name>/` | `<Name>View.swift` + `<Name>ViewModel.swift` |
+| Entities | `entities` | Plain data. No I/O. |
+| DTOs | `dto` | Mirror the real StackExchange `/2.3/users` wire format (`items` wrapper, snake_case, epoch seconds). Unknown fields ignored, optional fields tolerated. Mapped to entities at the service boundary; nothing above the service sees a DTO. Display names are HTML-entity decoded here. |
+| Service | `api` | `UserApiService`: reqwest + rustls. Explicit query `site=stackoverflow&pagesize=20&order=desc&sort=reputation`. Base URL injected (mock server in tests/e2e). |
+| Persistence | `follow_store` | `FollowStore` trait; `JsonFileFollowStore` writes via temp file + rename. A corrupt file is reset to empty and a `Storage` error is surfaced once. Path injected by the host app. |
+| Repository | `repository` | `UserRepository`: single app-scoped instance; follow mutations serialized through a Tokio mutex; exposes a `followed_ids` snapshot and change observers. |
+| Use cases | `use_cases` | Exactly three: `GetTopUsers`, `ToggleFollow`, `SortUsers` (client-side, deterministic tie-break `id` asc, nulls last). |
+| FFI facade | `ffi` | The **only** UniFFI-exported surface (see below). |
 
-### iOS Libraries
+### Public (FFI) contract
 
-| Purpose | Library |
+Kept deliberately small:
+
+| Export | Shape |
 |---|---|
-| Image loading | [Kingfisher](https://github.com/onevcat/Kingfisher) |
-| Dependency injection | [swift-dependencies](https://github.com/pointfreeco/swift-dependencies) (PointFree) |
-| Testing | XCTest (native) |
+| `new_core(base_url, storage_path)` | factory → `SoCore` object |
+| `SoCore.get_top_users()` | `async` → `Result<Vec<User>, CoreError>` (Kotlin `suspend`, Swift `async throws`) |
+| `SoCore.toggle_follow(user_id)` | `async` → `Result<bool, CoreError>` (new followed state) |
+| `SoCore.followed_ids()` | snapshot `Result<Vec<u64>, CoreError>` (`Storage` surfaced once after a corrupt-file reset) |
+| `SoCore.add_follow_observer(observer)` | callback interface → `FollowObservation` handle; `dispose()` (or drop) unregisters |
+| `sort_users(users, field, direction)` | pure `SortUsers` use case → sorted `Vec<User>`; `SortField`/`SortDirection` exported as enums |
 
-### iOS ViewModel Template
+`CoreError { Network, Http { code }, Decoding, Storage }` is a typed error enum (thiserror).
+The core owns its Tokio runtime (UniFFI's `async_runtime = "tokio"` integration), so hosts never
+need to provide an executor.
 
-```swift
-@Observable
-@MainActor
-final class ExampleViewModel {
+### Mock server (`core/rust/mock-server`)
 
-    struct State {
-        var isLoading = false
-        var items: [Item] = []
-        var error: String? = nil
-    }
+axum server used by every test level:
 
-    enum Action {
-        case load
-        case refresh
-        case select(Item)
-    }
-
-    private(set) var state = State()
-
-    @Dependency(\.exampleService) private var service
-
-    func send(_ action: Action) {
-        switch action {
-        case .load: Task { await load() }
-        case .refresh: Task { await load() }
-        case .select(let item): handle(item)
-        }
-    }
-}
-```
+- `GET /2.3/users` → fixture of 20 realistic users (`fixtures/users.json`, includes edge users:
+  missing location/website/avatar/modified date, HTML-encoded name).
+- Scenarios `success | error | empty | slow | malformed`: per-request `X-Mock-Scenario` header,
+  or per-instance default via `POST /__scenario`. No process-global state — each test spawns
+  its own instance on an ephemeral port (`spawn_server`).
+- `GET /__ready` readiness probe; `GET /avatars/{id}.png` serves tiny generated PNGs (no internet
+  needed in e2e).
 
 ---
 
-## Android (Milestone 2)
+## Apps
 
-- **Language**: Kotlin
-- **UI**: Jetpack Compose
-- **Architecture**: MVI (same Action/State/send mental model as iOS)
-- **Module system**: Gradle multi-module (equivalent of iOS SPM packages)
-- **DI**: Hilt
+### MVI (both platforms)
 
-### Android Layer Map
+```
+Intent → Store.send(intent) → reduce(State, Intent) → new State → View re-renders
+                         └→ effect (calls core) → result Intent → reduce …
+```
 
-| Layer | Gradle module | Rule |
-|---|---|---|
-| Models + protocols | `:domain` | Pure Kotlin, no Android framework |
-| Networking | `:data:networking` | Retrofit + OkHttp |
-| Persistence | `:data:persistence` | Room or DataStore |
-| Image loading | Coil (in feature modules) | Compose-native |
-| Features | `:feature:user-list`, `:feature:user-detail` | ViewModel + Composable |
+- One immutable `State` per screen; reducers are pure; side effects only in the store.
+- Hand-rolled, no TCA/Orbit/middleware frameworks.
+- Invariants tested: latest-request-wins (stale completion suppression), rapid toggle policy,
+  loading vs empty-success vs error, retry recovery, Sort Apply/Cancel as draft state.
 
-### Android Libraries
+### iOS (`apps/ios`)
 
-| Purpose | Library |
+- SwiftUI, iOS 17+, XcodeGen (`.xcodeproj` gitignored). The app uses Swift 6 language mode
+  (strict concurrency). The generated-bindings framework and the UI-test target use Swift 5 mode.
+- Core delivered as a prebuilt static XCFramework (device arm64 + simulator arm64). Build it
+  with `core/rust/scripts/build-apple-xcframework.sh`, which writes `core/rust/build/apple`.
+  The generated `SoCore.swift` compiles into its own `SoCore` framework target. The clang module
+  `SoCoreFFI` (header + modulemap) is found via `SWIFT_INCLUDE_PATHS`. `FFIAliases.swift`
+  gives unambiguous names (`FFIUser`, `ffiSortUsers`, …), because the generated types share
+  names with the app models.
+- `CoreGateway` is a `@MainActor` protocol; `RustCoreGateway` is its implementation. It maps the
+  generated mutable structs to immutable app types. Stores depend only on the protocol.
+- Stores: `@MainActor` `Store<State, Intent>: ObservableObject` base (`send` → pure reducer →
+  `onTransition` effects); `UserListStore`, `UserDetailStore` and `SortOptionsStore`.
+- The follow observer is bridged to an `AsyncStream` (newest-only buffer), which a main-actor
+  task consumes. When the stream terminates (store `deinit` cancels the task), it calls
+  `FollowObservation.dispose()`.
+- Policies are the same as Android: latest-request-wins (task cancel + request-id guard),
+  ignore rapid toggles, Sort Apply/Cancel as draft state, surface a storage error once.
+- Images: `AsyncImage`. No third-party Swift packages. Base URL: Release uses the real API.
+  Debug uses `MOCK_BASE_URL` (launch env or Info.plist), with a Debug-only ATS exception for
+  `localhost`.
+
+### Android (`apps/android`)
+
+- Kotlin, Jetpack Compose, `ViewModel` + `StateFlow` MVI stores; constructor injection (no DI
+  framework). Images: Coil.
+- Core delivered via generated Kotlin bindings + `cargo-ndk` `.so` (arm64-v8a, x86_64). JNA on
+  the host JVM enables Kotlin↔real-Rust integration tests on Linux.
+- Standalone Gradle build under `apps/android` (single `:app` module). Kotlin bindings are
+  generated into `app/build/generated/uniffi` by `generateUniffiBindings` (runs
+  `core/rust/scripts/generate-bindings.sh`); device `.so`s are built only with `-Pso.ndk=true`.
+- `CoreGateway` interface (impl `RustCoreGateway`) maps generated binding types to immutable
+  app types; stores (`UserListStore`, `UserDetailStore`, `SortOptionsStore`) depend only on it.
+- Policies: latest-request-wins for list loads (job cancel + request-id guard in the reducer);
+  rapid toggles on a user with a toggle in flight are ignored; Sort Apply/Cancel is draft state.
+- Dependencies: Compose BOM, Navigation Compose, Lifecycle ViewModel, Coil 2, JNA (AAR on device,
+  JAR on host tests); tests: JUnit 4, kotlinx-coroutines-test, Turbine, Robolectric.
+
+---
+
+## Testing
+
+| Level | Where |
 |---|---|
-| Networking | Retrofit + OkHttp |
-| Image loading | Coil |
-| DI | Hilt |
-| Async | Kotlin Coroutines + Flow |
-| Testing | JUnit5 + MockK |
+| Unit | `cargo test` in so-core (mapping, sorting, store, repository); Kotlin store tests; Swift store tests |
+| Integration | `core/rust/so-core/tests/` — repository + real reqwest vs in-process axum mock-server on an ephemeral port; Kotlin vs real core via JNA |
+| UI | Compose (Robolectric smoke + instrumented), XCUITest acceptance on CI / Mac |
+| E2E | apps vs standalone mock-server (Android instrumented, iOS XCUITest; `tests/e2e/`) |
+| Swift contract | `BindingsContractTests`: generated Swift types + linked core (Mac/CI; Linux via `apps/ios/scripts/linux-swift-check.sh`) |
 
-### Android ViewModel Template
-
-```kotlin
-@HiltViewModel
-class ExampleViewModel @Inject constructor(
-    private val service: ExampleService
-) : ViewModel() {
-
-    sealed interface Action {
-        data object Load : Action
-        data class Select(val item: Item) : Action
-    }
-
-    data class State(
-        val isLoading: Boolean = false,
-        val items: List<Item> = emptyList(),
-        val error: String? = null
-    )
-
-    private val _state = MutableStateFlow(State())
-    val state: StateFlow<State> = _state.asStateFlow()
-
-    fun send(action: Action) {
-        when (action) {
-            is Action.Load -> load()
-            is Action.Select -> handle(action.item)
-        }
-    }
-}
-```
+Linux CI (`.github/workflows/linux.yml`) runs fmt, clippy, tests and binding generation; the
+`android` job runs store unit tests, the Robolectric smoke, the host-JVM integration suite and
+`assembleDebug`; `android-emulator` runs the instrumented acceptance suite (x86_64 emulator, real
+core `.so`, mock-server on the host via `10.0.2.2`). macOS CI (`.github/workflows/macos.yml`,
+`macos-14`, Xcode 16) builds the iOS slices. `ios-unit-tests` packages the XCFramework, runs
+XcodeGen and the XCTest unit/contract suite on an iPhone 16 simulator, and uploads the
+`so-core-apple` artifact. `ios-ui-tests` runs the XCUITest acceptance suite against a host
+mock-server at `localhost:8080`.
 
 ---
 
-## Rust Core (Milestone 3)
+## Superseded decisions
 
-- **Bridge**: Mozilla [UniFFI](https://github.com/mozilla/uniffi-rs)
-- **Role**: shared business logic extracted from the domain layer (both iOS and Android domain layers are replaced by generated UniFFI bindings)
-- **Location**: `core/rust/`
-
----
-
-## Naming Conventions
-
-| Context | Convention | Example |
+| Previous decision | Status | Replaced by |
 |---|---|---|
-| Swift files | PascalCase, suffix = role | `UserListViewModel.swift` |
-| Swift protocols | Name + `Protocol` | `UserRepositoryProtocol` |
-| Swift DI keys | camelCase | `\.userRepository` |
-| Swift mocks (tests) | `Mock` prefix | `MockUserRepository` |
-| Kotlin files | PascalCase | `UserListViewModel.kt` |
-| Kotlin interfaces | Name + `Repository` / `Service` | `UserRepository` |
-| JSON fields | snake_case decoded via `CodingKeys` (iOS) / Moshi/Gson (Android) | `display_name` → `displayName` |
-| Feature folders | PascalCase on iOS, kebab-case module on Android | `UserList/` / `:feature:user-list` |
+| Swift domain layer, later "extracted" to Rust (Milestone 3) | Superseded | Rust core is the data + business layer from day one |
+| `apps/ios/Packages/Networking` (URLSession SPM package) | Removed | `so-core` `UserApiService` (reqwest + rustls) |
+| `apps/ios/Packages/Persistence` (UserDefaults SPM package) | Removed | `so-core` `JsonFileFollowStore` (path injected by host) |
+| Kingfisher (iOS images) | Superseded | SwiftUI `AsyncImage` |
+| swift-dependencies (iOS DI) | Superseded | Plain initializer injection of the core / fakes |
+| Hilt (Android DI) | Superseded | Constructor injection |
+| Retrofit + OkHttp (Android networking) | Superseded | `so-core` via UniFFI |
+| Room / DataStore (Android persistence) | Superseded | `so-core` via UniFFI |
+| Gradle module-per-layer (`:domain`, `:data:*`) | Superseded | Single app module + core bindings |
+| MVVM "send(Action)" ViewModels | Refined | MVI with explicit pure reducers |
 
 ---
 
-## What Agents Must NOT Do
+## Rules
 
-- Import networking or persistence packages directly in a ViewModel or View
-- Use singletons in production code (use DI instead)
-- Add business logic to Views/Composables
-- Introduce 3rd party libraries not listed above without updating this document
-- Commit `.xcodeproj` (it is gitignored; run `xcodegen generate` locally)
-- Use Objective-C, storyboards, or XIBs on iOS
-- Use blocking/synchronous network calls
+- Views/Composables contain no business logic; stores never parse, sort, or persist — the core does.
+- No DTO crosses the core boundary.
+- Do not widen the FFI surface without updating this document.
+- No new third-party dependencies without updating this document.
+- Never commit generated artifacts (`.xcodeproj`, `core/rust/bindings/`, `target/`).
