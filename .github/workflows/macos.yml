@@ -1,0 +1,51 @@
+name: macOS (iOS core slices)
+
+# Placeholder: proves so-core cross-compiles for the iOS device + simulator
+# slices on Apple Silicon. XCFramework packaging and app/XCTest jobs land in a
+# later phase (see docs/REWRITE_PLAN.md section 9).
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: macos-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: core/rust
+
+jobs:
+  ios-slices:
+    name: so-core for ${{ matrix.target }}
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [aarch64-apple-ios, aarch64-apple-ios-sim]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain + target
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/rust
+          key: ${{ matrix.target }}
+
+      - name: Build so-core static library
+        run: cargo build -p so-core --lib --release --target ${{ matrix.target }}
+
+      - name: Verify static library
+        run: test -s target/${{ matrix.target }}/release/libso_core.a
+
+      - name: Generate Swift bindings (host dylib)
+        run: ./scripts/generate-bindings.sh

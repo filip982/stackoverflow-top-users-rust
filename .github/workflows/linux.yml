@@ -1,0 +1,50 @@
+name: Linux (Rust core)
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: linux-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+defaults:
+  run:
+    working-directory: core/rust
+
+jobs:
+  rust:
+    name: fmt · clippy · test · bindings
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/rust
+
+      - name: cargo fmt --check
+        run: cargo fmt --all --check
+
+      - name: cargo clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: cargo test
+        run: cargo test --workspace
+
+      - name: Generate UniFFI bindings (Kotlin + Swift)
+        run: ./scripts/generate-bindings.sh
+
+      - name: Upload generated bindings
+        uses: actions/upload-artifact@v4
+        with:
+          name: uniffi-bindings
+          path: core/rust/bindings/
