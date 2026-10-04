@@ -96,7 +96,9 @@ async fn unknown_scenario_header_is_rejected() {
 #[tokio::test]
 async fn missing_site_parameter_is_bad_request() {
     let (_h, base) = start().await;
-    let res = reqwest::get(format!("{base}/2.3/users?pagesize=20")).await.unwrap();
+    let res = reqwest::get(format!("{base}/2.3/users?pagesize=20"))
+        .await
+        .unwrap();
     assert_eq!(res.status(), 400);
     let body: Value = res.json().await.unwrap();
     assert_eq!(body["error_name"], "bad_parameter");
@@ -126,7 +128,11 @@ async fn scenario_endpoint_sets_instance_default_and_header_overrides_it() {
 
     let body: Value = get_users(&base, None).await.json().await.unwrap();
     assert_eq!(body["items"].as_array().unwrap().len(), 0);
-    let body: Value = get_users(&base, Some("success")).await.json().await.unwrap();
+    let body: Value = get_users(&base, Some("success"))
+        .await
+        .json()
+        .await
+        .unwrap();
     assert_eq!(body["items"].as_array().unwrap().len(), 20);
     // Other instances are unaffected.
     let body: Value = get_users(&other_base, None).await.json().await.unwrap();
@@ -148,12 +154,16 @@ async fn invalid_scenario_body_is_rejected() {
 #[tokio::test]
 async fn serves_png_avatars() {
     let (_h, base) = start().await;
-    let res = reqwest::get(format!("{base}/avatars/22656.png")).await.unwrap();
+    let res = reqwest::get(format!("{base}/avatars/22656.png"))
+        .await
+        .unwrap();
     assert_eq!(res.status(), 200);
     assert_eq!(res.headers()["content-type"], "image/png");
     let bytes = res.bytes().await.unwrap();
     assert_eq!(&bytes[..8], b"\x89PNG\r\n\x1a\n");
-    let missing = reqwest::get(format!("{base}/avatars/abc.png")).await.unwrap();
+    let missing = reqwest::get(format!("{base}/avatars/abc.png"))
+        .await
+        .unwrap();
     assert_eq!(missing.status(), 404);
 }
 
