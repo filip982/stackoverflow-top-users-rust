@@ -1,11 +1,11 @@
-# Cross-Platform Rebuild Plan — stackoverflow-top-users-kmp & stackoverflow-users-rust
+# Cross-Platform Rebuild Plan — stackoverflow-top-users-kmp & stackoverflow-top-users-rust
 
 **Author:** Fable (orchestrator). **Implementers:** Opus subagents. **Plan reviewer:** GPT-6 Astra.
 **Date:** 2026-10-04
 
 ## 1. Product spec (identical for both repos)
 
-From `stackoverflow-users-rust/docs/PROJECT_SPEC.md` (authoritative, both repos implement the same product):
+From `stackoverflow-top-users-rust/docs/PROJECT_SPEC.md` (authoritative, both repos implement the same product):
 
 - **List screen:** top 20 Stack Overflow users (StackExchange API `/2.3/users?site=stackoverflow&pagesize=20`). Cell: avatar, name, reputation, follow/unfollow toggle + followed indicator. Follow is local-only, persisted across sessions. Server error/offline → empty state with error message + retry.
 - **Detail screen:** avatar, name, reputation, follow toggle, location, website URL (if present).
@@ -37,7 +37,7 @@ iosApp/        SwiftUI + XcodeGen; consumes shared XCFramework; Swift MVI store
 
 Key deps: Ktor client/server, kotlinx.serialization, kotlinx.coroutines, multiplatform-settings, Coil (Android images), Turbine (flow tests). iOS images: AsyncImage.
 
-## 4. Repo B — stackoverflow-users-rust (Rust core)
+## 4. Repo B — stackoverflow-top-users-rust (Rust core)
 
 Fits the existing `core/rust`, `apps/ios`, `apps/android`, `tests/e2e` skeleton.
 
