@@ -42,5 +42,42 @@ sealed interface UserListIntent {
     data class FollowFailed(val userId: Long?, val error: CoreError) : UserListIntent
 }
 
-/** Pure reducer. */
-fun reduceUserList(state: UserListState, intent: UserListIntent): UserListState = state
+/** Pure reducer: no I/O, no core calls. Stale results return the same state instance. */
+fun reduceUserList(state: UserListState, intent: UserListIntent): UserListState = when (intent) {
+    UserListIntent.Load, UserListIntent.Retry ->
+        state.copy(content = UserListState.Content.Loading, requestId = state.requestId + 1)
+
+    is UserListIntent.UsersLoaded -> when {
+        intent.requestId != state.requestId -> state
+        intent.users.isEmpty() -> state.copy(content = UserListState.Content.Empty)
+        else -> state.copy(content = UserListState.Content.Loaded(intent.users))
+    }
+
+    is UserListIntent.UsersFailed ->
+        if (intent.requestId != state.requestId) state
+        else state.copy(content = UserListState.Content.Failed(intent.error))
+
+    is UserListIntent.ApplySort -> state.copy(sort = intent.sort)
+
+    is UserListIntent.UsersSorted ->
+        if (intent.sort != state.sort || state.content !is UserListState.Content.Loaded) state
+        else state.copy(content = UserListState.Content.Loaded(intent.users))
+
+    is UserListIntent.ToggleFollow ->
+        if (intent.userId in state.pendingFollows) state
+        else state.copy(pendingFollows = state.pendingFollows + intent.userId, followError = null)
+
+    is UserListIntent.FollowToggled -> state.copy(
+        pendingFollows = state.pendingFollows - intent.userId,
+        followed = if (intent.followed) state.followed + intent.userId else state.followed - intent.userId,
+    )
+
+    is UserListIntent.FollowFailed -> state.copy(
+        pendingFollows = intent.userId?.let { state.pendingFollows - it } ?: state.pendingFollows,
+        followError = intent.error,
+    )
+
+    is UserListIntent.FollowsChanged -> state.copy(followed = intent.followed)
+
+    UserListIntent.DismissFollowError -> state.copy(followError = null)
+}
