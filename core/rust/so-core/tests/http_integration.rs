@@ -154,7 +154,11 @@ async fn facade_end_to_end_fetch_follow_observe_and_reload() {
 #[tokio::test]
 async fn dropping_observation_handle_unregisters() {
     let dir = tempfile::tempdir().unwrap();
-    let storage = dir.path().join("follows.json").to_string_lossy().into_owned();
+    let storage = dir
+        .path()
+        .join("follows.json")
+        .to_string_lossy()
+        .into_owned();
     let core = new_core("http://127.0.0.1:9".into(), storage);
     let recorder = Arc::new(Recorder::default());
     drop(core.add_follow_observer(Box::new(Forward(Arc::clone(&recorder)))));
