@@ -123,7 +123,7 @@ mod tests {
         fn save(&self, ids: &BTreeSet<UserId>) -> Result<(), CoreError> {
             if self.fail_saves.load(Ordering::SeqCst) {
                 return Err(CoreError::Storage {
-                    message: "disk full".into(),
+                    reason: "disk full".into(),
                 });
             }
             self.saves.fetch_add(1, Ordering::SeqCst);

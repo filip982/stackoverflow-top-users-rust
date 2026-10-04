@@ -58,7 +58,7 @@ impl From<UserDto> for User {
 ///   [`CoreError::Decoding`]
 pub fn parse_users_response(body: &[u8]) -> Result<Vec<User>, CoreError> {
     let dto: UsersResponseDto = serde_json::from_slice(body).map_err(|e| CoreError::Decoding {
-        message: e.to_string(),
+        reason: e.to_string(),
     })?;
     if let Some(error_id) = dto.error_id {
         return Err(CoreError::Http {
@@ -66,7 +66,7 @@ pub fn parse_users_response(body: &[u8]) -> Result<Vec<User>, CoreError> {
         });
     }
     let items = dto.items.ok_or_else(|| CoreError::Decoding {
-        message: "response has neither `items` nor `error_id`".into(),
+        reason: "response has neither `items` nor `error_id`".into(),
     })?;
     Ok(items.into_iter().map(User::from).collect())
 }

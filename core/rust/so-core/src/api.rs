@@ -60,7 +60,7 @@ impl UserApiService {
 /// Builds `{base}/2.3/users?site=stackoverflow&pagesize=20&order=desc&sort=reputation`.
 pub fn users_url(base_url: &str) -> Result<Url, CoreError> {
     let invalid = |reason: String| CoreError::Network {
-        message: format!("invalid base url {base_url:?}: {reason}"),
+        reason: format!("invalid base url {base_url:?}: {reason}"),
     };
     let mut url = Url::parse(base_url).map_err(|e| invalid(e.to_string()))?;
     if url.cannot_be_a_base() {
@@ -77,7 +77,7 @@ pub fn users_url(base_url: &str) -> Result<Url, CoreError> {
 fn network_error(err: reqwest::Error) -> CoreError {
     // Body read failures after headers arrived are still transport problems.
     CoreError::Network {
-        message: err.to_string(),
+        reason: err.to_string(),
     }
 }
 

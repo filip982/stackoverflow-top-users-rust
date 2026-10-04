@@ -93,7 +93,7 @@ impl FollowStore for JsonFileFollowStore {
                 // Reset so the corruption is reported exactly once.
                 let reset = self.save(&BTreeSet::new());
                 Err(CoreError::Storage {
-                    message: match reset {
+                    reason: match reset {
                         Ok(()) => {
                             format!("follow store was corrupt and has been reset: {parse_err}")
                         }
