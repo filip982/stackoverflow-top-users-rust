@@ -1,5 +1,6 @@
-# Minimal XcodeGen skeleton. The so-core XCFramework + generated Swift bindings
-# are wired in a later phase (see docs/architecture.md). No third-party packages.
+# XcodeGen spec. Generate with `scripts/bootstrap.sh` (builds the Rust core first) or, when
+# core/rust/build/apple already exists, plain `xcodegen generate`. See apps/ios/README.md.
+# The generated StackOverflowUsers.xcodeproj is gitignored. No third-party packages.
 name: StackOverflowUsers
 options:
   bundleIdPrefix: com.filip982
@@ -9,18 +10,66 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
 
+settings:
+  base:
+    # Output of core/rust/scripts/build-apple-xcframework.sh.
+    SO_CORE_APPLE_DIR: $(SRCROOT)/../../core/rust/build/apple
+    # Clang module `SoCoreFFI` (generated header + module.modulemap). Every target that imports
+    # the Swift `SoCore` module needs it on the search path.
+    SWIFT_INCLUDE_PATHS: $(SO_CORE_APPLE_DIR)/include
+    # The core ships arm64 device + arm64 simulator slices only (Apple Silicon).
+    EXCLUDED_ARCHS[sdk=iphonesimulator*]: x86_64
+    TARGETED_DEVICE_FAMILY: "1"
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+
 targets:
+  # Generated UniFFI Swift API compiled as its own module, linking the static Rust core.
+  # Kept separate so its `User`/`SortField`/`CoreError` never collide with the app's models.
+  SoCore:
+    type: framework
+    platform: iOS
+    sources:
+      - path: ../../core/rust/build/apple/Sources/SoCore
+        group: SoCore
+      - path: SoCoreSupport
+        group: SoCore
+    dependencies:
+      - framework: ../../core/rust/build/apple/SoCore.xcframework
+        embed: false
+    settings:
+      base:
+        # Generated code: compiled in Swift 5 mode so a UniFFI codegen detail can never break
+        # the app's Swift 6 strict-concurrency build.
+        SWIFT_VERSION: "5.0"
+        PRODUCT_BUNDLE_IDENTIFIER: com.filip982.stackoverflow-users.socore
+        GENERATE_INFOPLIST_FILE: YES
+        DEFINES_MODULE: YES
+        SKIP_INSTALL: YES
+
   StackOverflowUsers:
     type: application
     platform: iOS
     sources:
       - path: StackOverflowUsers
+    dependencies:
+      - target: SoCore
     settings:
       base:
         SWIFT_VERSION: "6.0"
-        INFOPLIST_FILE: StackOverflowUsers/Resources/Info.plist
         PRODUCT_BUNDLE_IDENTIFIER: com.filip982.stackoverflow-users
-        DEVELOPMENT_TEAM: ""
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+      configs:
+        Debug:
+          # Debug-only: MOCK_BASE_URL key + ATS exception for http://localhost (mock-server).
+          INFOPLIST_FILE: Config/Info-Debug.plist
+          # Empty = real API. Override: `xcodebuild ... MOCK_BASE_URL=http://localhost:8080`,
+          # or at launch with the MOCK_BASE_URL environment variable (UI tests do this).
+          MOCK_BASE_URL: ""
+        Release:
+          # Release always talks to https://api.stackexchange.com; no ATS exceptions.
+          INFOPLIST_FILE: Config/Info.plist
 
   StackOverflowUsersTests:
     type: bundle.unit-test
@@ -29,6 +78,38 @@ targets:
       - path: StackOverflowUsersTests
     dependencies:
       - target: StackOverflowUsers
+      - target: SoCore
+        embed: false
     settings:
       base:
         SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.filip982.stackoverflow-users.tests
+
+  # CI-only acceptance suite against a standalone mock-server (see README).
+  StackOverflowUsersUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: StackOverflowUsersUITests
+    dependencies:
+      - target: StackOverflowUsers
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: YES
+        PRODUCT_BUNDLE_IDENTIFIER: com.filip982.stackoverflow-users.uitests
+
+schemes:
+  StackOverflowUsers:
+    build:
+      targets:
+        StackOverflowUsers: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      gatherCoverageData: true
+      targets:
+        - name: StackOverflowUsersTests
+        - name: StackOverflowUsersUITests
