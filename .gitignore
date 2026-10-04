@@ -24,6 +24,7 @@ apps/android/build/
 apps/android/**/*.apk
 apps/android/**/*.aab
 apps/android/local.properties
+apps/android/.kotlin/
 
 # Rust
 core/rust/target/
