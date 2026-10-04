@@ -18,11 +18,12 @@ core/rust/                 Cargo workspace
   mock-server/             axum mock of GET /2.3/users (scenarios, avatars, control endpoints)
   fixtures/                wire-format fixtures shared by all test levels
   scripts/generate-bindings.sh   Kotlin + Swift binding generation check
+  scripts/build-apple-xcframework.sh   SoCore.xcframework + Swift bindings for iOS (macOS)
   bindings/                generated bindings (gitignored)
-apps/ios/                  SwiftUI app (XcodeGen skeleton; wired to the core in a later phase)
+apps/ios/                  SwiftUI MVI app over the core (XcodeGen; see apps/ios/README.md)
 apps/android/              Compose MVI app over the core (own Gradle build; see apps/android/README.md)
 tests/e2e/                 e2e plan (later phase)
-.github/workflows/         linux.yml (Rust gate + Android unit/Robolectric/host-JVM integration + emulator), macos.yml (iOS slices), pr-review, tag-to-main
+.github/workflows/         linux.yml (Rust gate + Android unit/Robolectric/host-JVM integration + emulator), macos.yml (iOS slices + xcframework/unit/contract tests + XCUITest), pr-review, tag-to-main
 ```
 
 ## Local commands

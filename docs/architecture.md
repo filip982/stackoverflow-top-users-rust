@@ -43,10 +43,11 @@ delegate every data/business decision to the core.
 core/rust/            Cargo workspace
   so-core/            shared core crate (lib + cdylib + staticlib), UniFFI exports
   mock-server/        axum StackExchange mock (fixtures + scenarios), lib + bin
-  scripts/            binding generation script
+  scripts/            binding generation + Apple XCFramework packaging scripts
   bindings/           generated Swift/Kotlin bindings (gitignored)
-apps/ios/             SwiftUI app (XcodeGen project.yml) — later phase
-apps/android/         Compose app — later phase
+  build/apple/        SoCore.xcframework + Swift bindings for iOS (gitignored)
+apps/ios/             SwiftUI MVI app (XcodeGen project.yml; see apps/ios/README.md)
+apps/android/         Compose MVI app (see apps/android/README.md)
 tests/e2e/            e2e suites against mock-server — later phase
 docs/                 PROJECT_SPEC (product), architecture (this), REWRITE_PLAN
 ```
@@ -104,7 +105,7 @@ axum server used by every test level:
 
 ---
 
-## Apps (later phases)
+## Apps
 
 ### MVI (both platforms)
 
@@ -120,10 +121,26 @@ Intent → Store.send(intent) → reduce(State, Intent) → new State → View r
 
 ### iOS (`apps/ios`)
 
-- Swift 6 strict concurrency, SwiftUI, iOS 17+, XcodeGen (`.xcodeproj` gitignored).
-- `@Observable @MainActor` stores; core callbacks hop to `MainActor`.
-- Images: `AsyncImage`. No third-party Swift packages.
-- Core delivered as a prebuilt XCFramework (device arm64 + simulator arm64) + generated Swift.
+- SwiftUI, iOS 17+, XcodeGen (`.xcodeproj` gitignored). The app uses Swift 6 language mode
+  (strict concurrency). The generated-bindings framework and the UI-test target use Swift 5 mode.
+- Core delivered as a prebuilt static XCFramework (device arm64 + simulator arm64). Build it
+  with `core/rust/scripts/build-apple-xcframework.sh`, which writes `core/rust/build/apple`.
+  The generated `SoCore.swift` compiles into its own `SoCore` framework target. The clang module
+  `SoCoreFFI` (header + modulemap) is found via `SWIFT_INCLUDE_PATHS`. `FFIAliases.swift`
+  gives unambiguous names (`FFIUser`, `ffiSortUsers`, …), because the generated types share
+  names with the app models.
+- `CoreGateway` is a `@MainActor` protocol; `RustCoreGateway` is its implementation. It maps the
+  generated mutable structs to immutable app types. Stores depend only on the protocol.
+- Stores: `@MainActor` `Store<State, Intent>: ObservableObject` base (`send` → pure reducer →
+  `onTransition` effects); `UserListStore`, `UserDetailStore` and `SortOptionsStore`.
+- The follow observer is bridged to an `AsyncStream` (newest-only buffer), which a main-actor
+  task consumes. When the stream terminates (store `deinit` cancels the task), it calls
+  `FollowObservation.dispose()`.
+- Policies are the same as Android: latest-request-wins (task cancel + request-id guard),
+  ignore rapid toggles, Sort Apply/Cancel as draft state, surface a storage error once.
+- Images: `AsyncImage`. No third-party Swift packages. Base URL: Release uses the real API.
+  Debug uses `MOCK_BASE_URL` (launch env or Info.plist), with a Debug-only ATS exception for
+  `localhost`.
 
 ### Android (`apps/android`)
 
@@ -149,14 +166,18 @@ Intent → Store.send(intent) → reduce(State, Intent) → new State → View r
 |---|---|
 | Unit | `cargo test` in so-core (mapping, sorting, store, repository); Kotlin store tests; Swift store tests |
 | Integration | `core/rust/so-core/tests/` — repository + real reqwest vs in-process axum mock-server on an ephemeral port; Kotlin vs real core via JNA |
-| UI | Compose (Robolectric smoke + instrumented), SwiftUI XCTest on CI |
-| E2E | apps vs standalone mock-server (`tests/e2e/`) |
+| UI | Compose (Robolectric smoke + instrumented), XCUITest acceptance on CI / Mac |
+| E2E | apps vs standalone mock-server (Android instrumented, iOS XCUITest; `tests/e2e/`) |
+| Swift contract | `BindingsContractTests`: generated Swift types + linked core (Mac/CI; Linux via `apps/ios/scripts/linux-swift-check.sh`) |
 
 Linux CI (`.github/workflows/linux.yml`) runs fmt, clippy, tests and binding generation; the
 `android` job runs store unit tests, the Robolectric smoke, the host-JVM integration suite and
 `assembleDebug`; `android-emulator` runs the instrumented acceptance suite (x86_64 emulator, real
 core `.so`, mock-server on the host via `10.0.2.2`). macOS CI (`.github/workflows/macos.yml`,
-`macos-14`) builds the iOS slices; iOS app jobs land later.
+`macos-14`, Xcode 16) builds the iOS slices. `ios-unit-tests` packages the XCFramework, runs
+XcodeGen and the XCTest unit/contract suite on an iPhone 16 simulator, and uploads the
+`so-core-apple` artifact. `ios-ui-tests` runs the XCUITest acceptance suite against a host
+mock-server at `localhost:8080`.
 
 ---
 
