@@ -1,3 +1,5 @@
+# Minimal XcodeGen skeleton. The so-core XCFramework + generated Swift bindings
+# are wired in a later phase (see docs/architecture.md). No third-party packages.
 name: StackOverflowUsers
 options:
   bundleIdPrefix: com.filip982
@@ -7,32 +9,12 @@ options:
   createIntermediateGroups: true
   groupSortPosition: top
 
-packages:
-  Kingfisher:
-    url: https://github.com/onevcat/Kingfisher
-    from: "7.0.0"
-  swift-dependencies:
-    url: https://github.com/pointfreeco/swift-dependencies
-    from: "1.0.0"
-  Networking:
-    path: Packages/Networking
-  Persistence:
-    path: Packages/Persistence
-
 targets:
   StackOverflowUsers:
     type: application
     platform: iOS
     sources:
       - path: StackOverflowUsers
-    resources:
-      - path: StackOverflowUsers/Resources/Assets.xcassets
-    dependencies:
-      - package: Kingfisher
-      - package: swift-dependencies
-        product: Dependencies
-      - package: Networking
-      - package: Persistence
     settings:
       base:
         SWIFT_VERSION: "6.0"
@@ -47,10 +29,6 @@ targets:
       - path: StackOverflowUsersTests
     dependencies:
       - target: StackOverflowUsers
-      - package: swift-dependencies
-        product: DependenciesTestSupport
-      - package: Networking
-      - package: Persistence
     settings:
       base:
         SWIFT_VERSION: "6.0"
