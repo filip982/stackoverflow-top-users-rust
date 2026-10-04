@@ -30,10 +30,10 @@ targets:
     type: framework
     platform: iOS
     sources:
+      # No `group:` overrides: XcodeGen then mis-resolves this out-of-tree path (doubled
+      # core/rust/build prefix). Default groups keep the on-disk path.
       - path: ../../core/rust/build/apple/Sources/SoCore
-        group: SoCore
       - path: SoCoreSupport
-        group: SoCore
     dependencies:
       - framework: ../../core/rust/build/apple/SoCore.xcframework
         embed: false
