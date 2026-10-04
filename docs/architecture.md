@@ -131,6 +131,15 @@ Intent → Store.send(intent) → reduce(State, Intent) → new State → View r
   framework). Images: Coil.
 - Core delivered via generated Kotlin bindings + `cargo-ndk` `.so` (arm64-v8a, x86_64). JNA on
   the host JVM enables Kotlin↔real-Rust integration tests on Linux.
+- Standalone Gradle build under `apps/android` (single `:app` module). Kotlin bindings are
+  generated into `app/build/generated/uniffi` by `generateUniffiBindings` (runs
+  `core/rust/scripts/generate-bindings.sh`); device `.so`s are built only with `-Pso.ndk=true`.
+- `CoreGateway` interface (impl `RustCoreGateway`) maps generated binding types to immutable
+  app types; stores (`UserListStore`, `UserDetailStore`, `SortOptionsStore`) depend only on it.
+- Policies: latest-request-wins for list loads (job cancel + request-id guard in the reducer);
+  rapid toggles on a user with a toggle in flight are ignored; Sort Apply/Cancel is draft state.
+- Dependencies: Compose BOM, Navigation Compose, Lifecycle ViewModel, Coil 2, JNA (AAR on device,
+  JAR on host tests); tests: JUnit 4, kotlinx-coroutines-test, Turbine, Robolectric.
 
 ---
 
@@ -143,8 +152,11 @@ Intent → Store.send(intent) → reduce(State, Intent) → new State → View r
 | UI | Compose (Robolectric smoke + instrumented), SwiftUI XCTest on CI |
 | E2E | apps vs standalone mock-server (`tests/e2e/`) |
 
-Linux CI (`.github/workflows/linux.yml`) runs fmt, clippy, tests and binding generation. macOS CI
-(`.github/workflows/macos.yml`, `macos-14`) builds the iOS slices; app jobs land later.
+Linux CI (`.github/workflows/linux.yml`) runs fmt, clippy, tests and binding generation; the
+`android` job runs store unit tests, the Robolectric smoke, the host-JVM integration suite and
+`assembleDebug`; `android-emulator` runs the instrumented acceptance suite (x86_64 emulator, real
+core `.so`, mock-server on the host via `10.0.2.2`). macOS CI (`.github/workflows/macos.yml`,
+`macos-14`) builds the iOS slices; iOS app jobs land later.
 
 ---
 

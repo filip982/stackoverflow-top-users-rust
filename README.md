@@ -20,9 +20,9 @@ core/rust/                 Cargo workspace
   scripts/generate-bindings.sh   Kotlin + Swift binding generation check
   bindings/                generated bindings (gitignored)
 apps/ios/                  SwiftUI app (XcodeGen skeleton; wired to the core in a later phase)
-apps/android/              Compose app (later phase)
+apps/android/              Compose MVI app over the core (own Gradle build; see apps/android/README.md)
 tests/e2e/                 e2e plan (later phase)
-.github/workflows/         linux.yml (Rust gate), macos.yml (iOS slices), pr-review, tag-to-main
+.github/workflows/         linux.yml (Rust gate + Android unit/Robolectric/host-JVM integration + emulator), macos.yml (iOS slices), pr-review, tag-to-main
 ```
 
 ## Local commands

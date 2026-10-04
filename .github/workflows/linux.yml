@@ -1,4 +1,4 @@
-name: Linux (Rust core)
+name: Linux (Rust core + Android)
 
 on:
   push:
@@ -48,3 +48,124 @@ jobs:
         with:
           name: uniffi-bindings
           path: core/rust/bindings/
+
+  android:
+    name: android · unit + Robolectric + host-JVM integration + assemble
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        working-directory: .
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/rust
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      # Android SDK is preinstalled on GitHub-hosted runners (ANDROID_HOME).
+      - uses: gradle/actions/setup-gradle@v4
+
+      # `test` = store unit tests + Compose Robolectric smoke (fake core).
+      # `hostIntegrationTest` builds the host so-core cdylib + mock-server with cargo, then runs
+      # the generated Kotlin bindings over JNA against mock-server processes on ephemeral ports.
+      - name: Unit + Robolectric + host-JVM integration
+        run: ./gradlew --console=plain test hostIntegrationTest
+
+      - name: assembleDebug
+        run: ./gradlew --console=plain assembleDebug
+
+      - name: Upload test reports
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-test-reports
+          path: apps/android/app/build/reports/tests/
+
+  android-emulator:
+    name: android · instrumented acceptance (emulator)
+    needs: android
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable KVM
+        working-directory: .
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Install Rust toolchain + Android targets + cargo-ndk
+        working-directory: .
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add aarch64-linux-android x86_64-linux-android
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core/rust
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Start mock-server on the host (emulator reaches it as 10.0.2.2:8080)
+        working-directory: core/rust
+        run: |
+          cargo build -p mock-server --bin mock-server
+          nohup ./target/debug/mock-server --host 127.0.0.1 --port 8080 > "$RUNNER_TEMP/mock-server.log" 2>&1 &
+          for _ in $(seq 1 50); do
+            curl -fsS http://127.0.0.1:8080/__ready && exit 0
+            sleep 0.2
+          done
+          cat "$RUNNER_TEMP/mock-server.log"; exit 1
+
+      # cargo-ndk cross-compiles so-core for arm64-v8a + x86_64 into the APK (-Pso.ndk=true).
+      - name: Build app + test APKs with native core
+        run: ./gradlew --console=plain -Pso.ndk=true assembleDebug assembleDebugAndroidTest
+
+      - name: Instrumented acceptance suite
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          working-directory: apps/android
+          script: ./gradlew --console=plain -Pso.ndk=true connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.mockBaseUrl=http://10.0.2.2:8080
+
+      - name: Upload reports + mock-server log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-emulator-reports
+          path: |
+            apps/android/app/build/reports/androidTests/
+            apps/android/app/build/outputs/androidTest-results/
+            ${{ runner.temp }}/mock-server.log
