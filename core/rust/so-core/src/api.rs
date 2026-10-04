@@ -38,15 +38,47 @@ impl UserApiService {
     }
 
     pub async fn fetch_top_users(&self) -> Result<Vec<User>, CoreError> {
-        let _ = &self.client;
-        todo!()
+        let url = users_url(&self.base_url)?;
+        let response = self
+            .client
+            .get(url)
+            .header(reqwest::header::ACCEPT, "application/json")
+            .send()
+            .await
+            .map_err(network_error)?;
+        let status = response.status();
+        let body = response.bytes().await.map_err(network_error)?;
+        if !status.is_success() {
+            return Err(CoreError::Http {
+                code: status.as_u16(),
+            });
+        }
+        parse_users_response(&body)
     }
 }
 
 /// Builds `{base}/2.3/users?site=stackoverflow&pagesize=20&order=desc&sort=reputation`.
 pub fn users_url(base_url: &str) -> Result<Url, CoreError> {
-    let _ = base_url;
-    todo!()
+    let invalid = |reason: String| CoreError::Network {
+        message: format!("invalid base url {base_url:?}: {reason}"),
+    };
+    let mut url = Url::parse(base_url).map_err(|e| invalid(e.to_string()))?;
+    if url.cannot_be_a_base() {
+        return Err(invalid("cannot be a base".into()));
+    }
+    url.path_segments_mut()
+        .map_err(|()| invalid("cannot be a base".into()))?
+        .pop_if_empty()
+        .extend(["2.3", "users"]);
+    url.query_pairs_mut().clear().extend_pairs(USERS_QUERY);
+    Ok(url)
+}
+
+fn network_error(err: reqwest::Error) -> CoreError {
+    // Body read failures after headers arrived are still transport problems.
+    CoreError::Network {
+        message: err.to_string(),
+    }
 }
 
 #[cfg(test)]

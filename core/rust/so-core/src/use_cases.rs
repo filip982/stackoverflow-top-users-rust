@@ -1,5 +1,6 @@
 //! The three business use cases. Kept intentionally small.
 
+use std::cmp::Ordering;
 use std::sync::Arc;
 
 use crate::{CoreError, SortDirection, SortField, User, UserId, UserRepository};
@@ -50,8 +51,36 @@ impl SortUsers {
         field: SortField,
         direction: SortDirection,
     ) -> Vec<User> {
-        let _ = (field, direction);
+        let mut users = users;
+        users.sort_by(|a, b| {
+            let primary = match field {
+                SortField::Reputation => directed(a.reputation.cmp(&b.reputation), direction),
+                SortField::Name => directed(
+                    a.display_name
+                        .to_lowercase()
+                        .cmp(&b.display_name.to_lowercase()),
+                    direction,
+                ),
+                SortField::CreationDate => {
+                    directed(a.creation_date.cmp(&b.creation_date), direction)
+                }
+                SortField::ModifiedDate => match (a.last_modified_date, b.last_modified_date) {
+                    (Some(x), Some(y)) => directed(x.cmp(&y), direction),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => Ordering::Equal,
+                },
+            };
+            primary.then_with(|| a.id.cmp(&b.id))
+        });
         users
+    }
+}
+
+fn directed(ordering: Ordering, direction: SortDirection) -> Ordering {
+    match direction {
+        SortDirection::Asc => ordering,
+        SortDirection::Desc => ordering.reverse(),
     }
 }
 

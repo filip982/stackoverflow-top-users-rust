@@ -26,8 +26,19 @@ impl UserRepository {
     /// Loads persisted follows eagerly. A load failure starts from an empty set
     /// and is reported once by the first [`Self::followed_ids`] call.
     pub fn new(api: UserApiService, store: Arc<dyn FollowStore>) -> Self {
-        let _ = (api, store);
-        todo!()
+        let (follows, pending_load_error) = match store.load() {
+            Ok(ids) => (ids, None),
+            Err(err) => (BTreeSet::new(), Some(err)),
+        };
+        Self {
+            api,
+            store,
+            write_lock: tokio::sync::Mutex::new(()),
+            follows: RwLock::new(follows),
+            pending_load_error: Mutex::new(pending_load_error),
+            observers: Mutex::new(HashMap::new()),
+            next_token: AtomicU64::new(1),
+        }
     }
 
     pub async fn top_users(&self) -> Result<Vec<User>, CoreError> {
@@ -37,23 +48,59 @@ impl UserRepository {
     /// Flips the follow state of `id`, persists it, then notifies observers.
     /// On a storage failure the in-memory state is left unchanged.
     pub async fn toggle_follow(&self, id: UserId) -> Result<bool, CoreError> {
-        let _ = id;
-        todo!()
+        let _guard = self.write_lock.lock().await;
+        let mut next = self.snapshot();
+        let followed = if next.remove(&id) {
+            false
+        } else {
+            next.insert(id);
+            true
+        };
+        self.store.save(&next)?;
+        let ids: Vec<UserId> = next.iter().copied().collect();
+        *self.follows.write().unwrap_or_else(|e| e.into_inner()) = next;
+        // Still under the write lock, so observers see changes in commit order.
+        self.notify(ids);
+        Ok(followed)
     }
 
     /// Sorted snapshot of followed ids.
     pub fn followed_ids(&self) -> Result<Vec<UserId>, CoreError> {
-        todo!()
+        let pending = lock(&self.pending_load_error).take();
+        match pending {
+            Some(err) => Err(err),
+            None => Ok(self.snapshot().into_iter().collect()),
+        }
     }
 
     pub fn add_observer(&self, observer: Arc<dyn FollowObserver>) -> ObserverToken {
-        let _ = observer;
-        todo!()
+        let token = self.next_token.fetch_add(1, Ordering::Relaxed);
+        lock(&self.observers).insert(token, observer);
+        token
     }
 
     pub fn remove_observer(&self, token: ObserverToken) {
-        let _ = token;
+        lock(&self.observers).remove(&token);
     }
+
+    fn snapshot(&self) -> BTreeSet<UserId> {
+        self.follows
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn notify(&self, ids: Vec<UserId>) {
+        // Copy out first: observers may (un)register from inside the callback.
+        let observers: Vec<_> = lock(&self.observers).values().cloned().collect();
+        for observer in observers {
+            observer.on_follows_changed(ids.clone());
+        }
+    }
+}
+
+fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]

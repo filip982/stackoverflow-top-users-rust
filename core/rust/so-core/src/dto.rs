@@ -37,19 +37,48 @@ pub struct UserDto {
 
 impl From<UserDto> for User {
     fn from(dto: UserDto) -> Self {
-        todo!("map {dto:?}")
+        User {
+            id: dto.user_id,
+            display_name: decode_html(&dto.display_name),
+            reputation: dto.reputation,
+            avatar_url: non_blank(dto.profile_image),
+            location: non_blank(dto.location).map(|l| decode_html(&l)),
+            website_url: non_blank(dto.website_url),
+            creation_date: dto.creation_date,
+            last_modified_date: dto.last_modified_date,
+        }
     }
 }
 
 /// Decodes a `/2.3/users` response body into domain users.
+///
+/// - `{"items": [...]}` -> users (in wire order; unknown fields ignored)
+/// - StackExchange error object (`error_id`) -> [`CoreError::Http`] with that id
+/// - anything else (malformed JSON, missing required field, no `items`) ->
+///   [`CoreError::Decoding`]
 pub fn parse_users_response(body: &[u8]) -> Result<Vec<User>, CoreError> {
-    let _ = body;
-    todo!()
+    let dto: UsersResponseDto = serde_json::from_slice(body).map_err(|e| CoreError::Decoding {
+        message: e.to_string(),
+    })?;
+    if let Some(error_id) = dto.error_id {
+        return Err(CoreError::Http {
+            code: u16::try_from(error_id).unwrap_or(0),
+        });
+    }
+    let items = dto.items.ok_or_else(|| CoreError::Decoding {
+        message: "response has neither `items` nor `error_id`".into(),
+    })?;
+    Ok(items.into_iter().map(User::from).collect())
 }
 
 /// Decodes HTML entities (named + numeric) as returned by StackExchange.
+/// Unknown entities are left untouched.
 pub fn decode_html(input: &str) -> String {
-    input.to_string()
+    html_escape::decode_html_entities(input).into_owned()
+}
+
+fn non_blank(value: Option<String>) -> Option<String> {
+    value.filter(|v| !v.trim().is_empty())
 }
 
 #[cfg(test)]
@@ -99,7 +128,10 @@ mod tests {
         let by_id = |id| users.iter().find(|u| u.id == id).unwrap();
         assert_eq!(by_id(3832970).display_name, "Wiktor Stribiżew");
         assert_eq!(by_id(217408).display_name, "Günter Zöchbauer");
-        assert_eq!(by_id(157882).location.as_deref(), Some("Willemstad, Curaçao"));
+        assert_eq!(
+            by_id(157882).location.as_deref(),
+            Some("Willemstad, Curaçao")
+        );
     }
 
     #[test]
@@ -122,7 +154,10 @@ mod tests {
         let second = &users[1];
         assert_eq!(second.location, None, "blank location -> None");
         assert_eq!(second.website_url, None, "empty website -> None");
-        assert_eq!(second.avatar_url.as_deref(), Some("https://example.com/a.png"));
+        assert_eq!(
+            second.avatar_url.as_deref(),
+            Some("https://example.com/a.png")
+        );
         assert_eq!(second.last_modified_date, Some(1_700_000_001));
     }
 
@@ -170,6 +205,9 @@ mod tests {
         assert_eq!(decode_html("&lt;&gt;&quot;&#39;&apos;"), "<>\"''");
         assert_eq!(decode_html("Z&#246;ch &#x17C;"), "Zöch ż");
         assert_eq!(decode_html("plain"), "plain");
-        assert_eq!(decode_html("broken &notanentity; &"), "broken &notanentity; &");
+        assert_eq!(
+            decode_html("broken &notanentity; &"),
+            "broken &notanentity; &"
+        );
     }
 }

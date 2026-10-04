@@ -1,7 +1,12 @@
 //! Local persistence of followed user ids.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::fs::{self, File};
+use std::io::{ErrorKind, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use serde::{Deserialize, Serialize};
 
 use crate::{CoreError, UserId};
 
@@ -27,19 +32,87 @@ impl JsonFileFollowStore {
         Self { path: path.into() }
     }
 
-    pub fn path(&self) -> &std::path::Path {
+    pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    fn temp_path(&self) -> PathBuf {
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let mut name = self
+            .path
+            .file_name()
+            .map(|n| n.to_os_string())
+            .unwrap_or_else(|| "follows.json".into());
+        name.push(format!(".tmp-{}-{n}", std::process::id()));
+        self.path.with_file_name(name)
+    }
+
+    fn write_atomically(&self, bytes: &[u8]) -> std::io::Result<()> {
+        if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            fs::create_dir_all(parent)?;
+        }
+        let tmp = self.temp_path();
+        let result = (|| {
+            let mut file = File::create(&tmp)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            fs::rename(&tmp, &self.path)
+        })();
+        if result.is_err() {
+            let _ = fs::remove_file(&tmp);
+        } else if let Some(parent) = self.path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            // Best effort: persist the rename itself (POSIX directory fsync).
+            if let Ok(dir) = File::open(parent) {
+                let _ = dir.sync_all();
+            }
+        }
+        result
     }
 }
 
+/// On-disk format. Versioned so the format can evolve.
+#[derive(Debug, Serialize, Deserialize)]
+struct FollowFile {
+    version: u32,
+    followed_ids: BTreeSet<UserId>,
+}
+
+const FORMAT_VERSION: u32 = 1;
+
 impl FollowStore for JsonFileFollowStore {
     fn load(&self) -> Result<BTreeSet<UserId>, CoreError> {
-        todo!()
+        let bytes = match fs::read(&self.path) {
+            Ok(bytes) => bytes,
+            Err(e) if e.kind() == ErrorKind::NotFound => return Ok(BTreeSet::new()),
+            Err(e) => return Err(CoreError::storage(e)),
+        };
+        match serde_json::from_slice::<FollowFile>(&bytes) {
+            Ok(file) => Ok(file.followed_ids),
+            Err(parse_err) => {
+                // Reset so the corruption is reported exactly once.
+                let reset = self.save(&BTreeSet::new());
+                Err(CoreError::Storage {
+                    message: match reset {
+                        Ok(()) => {
+                            format!("follow store was corrupt and has been reset: {parse_err}")
+                        }
+                        Err(e) => {
+                            format!("follow store is corrupt ({parse_err}) and reset failed: {e}")
+                        }
+                    },
+                })
+            }
+        }
     }
 
     fn save(&self, ids: &BTreeSet<UserId>) -> Result<(), CoreError> {
-        let _ = ids;
-        todo!()
+        let file = FollowFile {
+            version: FORMAT_VERSION,
+            followed_ids: ids.clone(),
+        };
+        let bytes = serde_json::to_vec(&file).map_err(CoreError::storage)?;
+        self.write_atomically(&bytes).map_err(CoreError::storage)
     }
 }
 
@@ -102,7 +175,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let store = store_in(&dir);
         store.save(&set(&[42])).unwrap();
-        fs::write(dir.path().join("follows.json.tmp-crashed"), b"{\"followed_i").unwrap();
+        fs::write(
+            dir.path().join("follows.json.tmp-crashed"),
+            b"{\"followed_i",
+        )
+        .unwrap();
         assert_eq!(store_in(&dir).load().unwrap(), set(&[42]));
     }
 
@@ -153,6 +230,9 @@ mod tests {
         // Parent "directory" is a regular file, so the write must fail.
         fs::write(dir.path().join("blocker"), b"").unwrap();
         let store = JsonFileFollowStore::new(dir.path().join("blocker/follows.json"));
-        assert!(matches!(store.save(&set(&[1])), Err(CoreError::Storage { .. })));
+        assert!(matches!(
+            store.save(&set(&[1])),
+            Err(CoreError::Storage { .. })
+        ));
     }
 }
