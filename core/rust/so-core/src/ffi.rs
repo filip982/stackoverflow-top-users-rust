@@ -94,3 +94,71 @@ impl Drop for FollowObservation {
         self.dispose();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{SortDirection, SortField};
+
+    fn user(id: UserId, name: &str, rep: u64, created: i64, modified: Option<i64>) -> User {
+        User {
+            id,
+            display_name: name.into(),
+            reputation: rep,
+            avatar_url: None,
+            location: None,
+            website_url: None,
+            creation_date: created,
+            last_modified_date: modified,
+        }
+    }
+
+    fn ids(users: &[User]) -> Vec<UserId> {
+        users.iter().map(|u| u.id).collect()
+    }
+
+    fn sample() -> Vec<User> {
+        vec![
+            user(5, "bob", 100, 50, Some(500)),
+            user(2, "Alice", 300, 10, None),
+            user(9, "carol", 100, 30, Some(900)),
+        ]
+    }
+
+    #[test]
+    fn exported_sort_users_delegates_to_sort_use_case() {
+        assert_eq!(
+            ids(&sort_users(sample(), SortField::Name, SortDirection::Asc)),
+            vec![2, 5, 9]
+        );
+        assert_eq!(
+            ids(&sort_users(
+                sample(),
+                SortField::Reputation,
+                SortDirection::Desc
+            )),
+            vec![2, 5, 9]
+        );
+        assert_eq!(
+            ids(&sort_users(
+                sample(),
+                SortField::ModifiedDate,
+                SortDirection::Desc
+            )),
+            vec![9, 5, 2]
+        );
+        assert_eq!(
+            ids(&sort_users(
+                sample(),
+                SortField::CreationDate,
+                SortDirection::Asc
+            )),
+            vec![2, 9, 5]
+        );
+    }
+
+    #[test]
+    fn exported_sort_users_handles_empty_input() {
+        assert!(sort_users(Vec::new(), SortField::default(), SortDirection::default()).is_empty());
+    }
+}
