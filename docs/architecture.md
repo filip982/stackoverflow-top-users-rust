@@ -82,8 +82,9 @@ Kept deliberately small:
 | `new_core(base_url, storage_path)` | factory → `SoCore` object |
 | `SoCore.get_top_users()` | `async` → `Result<Vec<User>, CoreError>` (Kotlin `suspend`, Swift `async throws`) |
 | `SoCore.toggle_follow(user_id)` | `async` → `Result<bool, CoreError>` (new followed state) |
-| `SoCore.followed_ids()` | snapshot `Vec<u64>` |
+| `SoCore.followed_ids()` | snapshot `Result<Vec<u64>, CoreError>` (`Storage` surfaced once after a corrupt-file reset) |
 | `SoCore.add_follow_observer(observer)` | callback interface → `FollowObservation` handle; `dispose()` (or drop) unregisters |
+| `sort_users(users, field, direction)` | pure `SortUsers` use case → sorted `Vec<User>`; `SortField`/`SortDirection` exported as enums |
 
 `CoreError { Network, Http { code }, Decoding, Storage }` is a typed error enum (thiserror).
 The core owns its Tokio runtime (UniFFI's `async_runtime = "tokio"` integration), so hosts never

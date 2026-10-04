@@ -60,5 +60,6 @@ curl -X POST -d '{"scenario":"slow"}' http://127.0.0.1:8080/__scenario
 
 `new_core(base_url, storage_path) -> SoCore`; `SoCore.get_top_users()` (async),
 `SoCore.toggle_follow(id)` (async), `SoCore.followed_ids()`,
-`SoCore.add_follow_observer(observer) -> FollowObservation` (`dispose()`), typed
+`SoCore.add_follow_observer(observer) -> FollowObservation` (`dispose()`),
+`sort_users(users, field, direction)` (pure, deterministic), typed
 `CoreError { Network, Http{code}, Decoding, Storage }`. See `docs/architecture.md`.

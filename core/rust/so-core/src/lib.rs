@@ -13,7 +13,7 @@ pub mod use_cases;
 pub use api::UserApiService;
 pub use entities::{SortDirection, SortField, User, UserId};
 pub use error::CoreError;
-pub use ffi::{new_core, FollowObservation, FollowObserver, SoCore};
+pub use ffi::{new_core, sort_users, FollowObservation, FollowObserver, SoCore};
 pub use follow_store::{FollowStore, JsonFileFollowStore};
 pub use repository::UserRepository;
 pub use use_cases::{GetTopUsers, SortUsers, ToggleFollow};

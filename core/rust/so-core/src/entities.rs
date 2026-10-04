@@ -15,7 +15,7 @@ pub struct User {
 }
 
 /// Client-side sort keys offered by the sort options screen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, uniffi::Enum)]
 pub enum SortField {
     #[default]
     Reputation,
@@ -24,7 +24,7 @@ pub enum SortField {
     ModifiedDate,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, uniffi::Enum)]
 pub enum SortDirection {
     Asc,
     #[default]

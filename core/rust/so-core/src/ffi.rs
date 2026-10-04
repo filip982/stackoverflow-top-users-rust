@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, Weak};
 
 use crate::repository::ObserverToken;
 use crate::{
-    CoreError, GetTopUsers, JsonFileFollowStore, ToggleFollow, User, UserApiService, UserId,
-    UserRepository,
+    CoreError, GetTopUsers, JsonFileFollowStore, SortDirection, SortField, SortUsers, ToggleFollow,
+    User, UserApiService, UserId, UserRepository,
 };
 
 /// Implemented by the host app (Swift/Kotlin) to observe follow changes.
@@ -40,6 +40,13 @@ pub fn new_core(base_url: String, storage_path: String) -> Arc<SoCore> {
         toggle_follow: ToggleFollow::new(Arc::clone(&repository)),
         repository,
     })
+}
+
+/// Client-side sort used by the sort options screen. Deterministic: ties are
+/// broken by `id` ascending and missing modified dates always sort last.
+#[uniffi::export]
+pub fn sort_users(users: Vec<User>, field: SortField, direction: SortDirection) -> Vec<User> {
+    SortUsers.execute(users, field, direction)
 }
 
 #[uniffi::export(async_runtime = "tokio")]
@@ -98,7 +105,6 @@ impl Drop for FollowObservation {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SortDirection, SortField};
 
     fn user(id: UserId, name: &str, rep: u64, created: i64, modified: Option<i64>) -> User {
         User {
